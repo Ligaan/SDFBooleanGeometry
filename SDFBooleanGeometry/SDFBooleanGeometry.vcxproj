@@ -71,11 +71,11 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <IncludePath>$(ProjectDir)external\glm\Include;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\glad\Include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)external\glm\Include;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\libigl\include;$(ProjectDir)external\Eigen;$(ProjectDir)external\glad\Include;$(IncludePath)</IncludePath>
     <LibraryPath>$(ProjectDir)external\GLFW\Lib;$(ProjectDir)external\glm\Lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <IncludePath>$(ProjectDir)external\glm\Include;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\glad\Include;$(IncludePath)</IncludePath>
+    <IncludePath>$(ProjectDir)external\glm\Include;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\libigl\include;$(ProjectDir)external\Eigen;$(ProjectDir)external\glad\Include;$(IncludePath)</IncludePath>
     <LibraryPath>$(ProjectDir)external\GLFW\Lib;$(ProjectDir)external\glm\Lib;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
@@ -112,7 +112,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;WIN32;_WINDOWS;_CRT_SECURE_NO_WARNINGS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)external;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\glm\Include;$(ProjectDir)external\glad\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)external;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\glm\Include;$(ProjectDir)external\libigl\include;$(ProjectDir)external\Eigen;$(ProjectDir)external\glad\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
@@ -130,7 +130,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>%(PreprocessorDefinitions);WIN32;_WINDOWS;NDEBUG;_CRT_SECURE_NO_WARNINGS;_CONSOLE</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>$(ProjectDir)external;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\glm\Include;$(ProjectDir)external\glad\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)external;$(ProjectDir)external\GLFW\Include;$(ProjectDir)external\glm\Include;$(ProjectDir)external\libigl\include;$(ProjectDir)external\Eigen;$(ProjectDir)external\glad\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
