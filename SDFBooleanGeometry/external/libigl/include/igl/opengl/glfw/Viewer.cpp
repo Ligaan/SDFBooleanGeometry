@@ -15,7 +15,7 @@
 
 #include "../gl.h"
 #include "../report_gl_error.h"
-#include <GLFW/glfw3.h>
+#include "glfw3.h"
 
 #include <cmath>
 #include <cstdio>

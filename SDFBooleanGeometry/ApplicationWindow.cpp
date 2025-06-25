@@ -14,6 +14,28 @@
 #include <igl/readOFF.h>
 #include <stdexcept>
 #include <Eigen/Dense>
+#include <igl/opengl/glfw/Viewer.h>
+
+void visualizeSDF(const Eigen::MatrixXd& P, const Eigen::VectorXd& S, const Eigen::MatrixXd& V, const Eigen::MatrixXi& F) {
+    igl::opengl::glfw::Viewer viewer;
+
+    // Add mesh for context
+    viewer.data().set_mesh(V, F);
+
+    // Add grid points colored by SDF
+    Eigen::MatrixXd colors(P.rows(), 3);
+    double max_sdf = S.cwiseAbs().maxCoeff();
+    for (int i = 0; i < P.rows(); ++i) {
+        float normalized_sdf = (S(i) / max_sdf) * 0.5 + 0.5; // Map to [0,1]
+        colors(i, 0) = normalized_sdf; // Red: SDF value
+        colors(i, 1) = normalized_sdf; // Green: SDF value
+        colors(i, 2) = normalized_sdf; // Blue: SDF value
+    }
+    viewer.data().add_points(P, colors);
+
+    // Launch viewer
+    viewer.launch();
+}
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
@@ -140,18 +162,18 @@ void ApplicationWindow::Render()
 
     // Render shape1 (sphere, no SDF)
     glm::mat4 model1 = glm::mat4(1.0f);
+    glm::mat4 model2 = glm::mat4(1.0f);
+    model2 = glm::translate(model2, glm::vec3(4.5f, 1.5f, 2.0f));
     model1 = glm::translate(model1, glm::vec3(0.0f, 0.0f, 0.0f));
     ourShader->setMat4("model", model1);
-    ourShader->setMat4("worldToLocalMatrix", glm::inverse(model1)); // Dummy for shape1
-    ourShader->setVec3("minBound", 0.0f, 0.0f, 0.0f); // Dummy values
-    ourShader->setVec3("maxBound", 0.0f, 0.0f, 0.0f);
+    ourShader->setMat4("worldToLocalMatrix", glm::inverse(model2)); // Dummy for shape1
+    ourShader->setVec3("minBound", min_bound[0], min_bound[1], min_bound[2]); // Dummy values
+    ourShader->setVec3("maxBound", max_bound[0], max_bound[1], max_bound[2]);
     glBindVertexArray(shape1.VAO);
     glDrawElements(GL_TRIANGLES, shape1.indexCount, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
     // Render shape2 (with SDF)
-    glm::mat4 model2 = glm::mat4(1.0f);
-    model2 = glm::translate(model2, glm::vec3(5.5f, 0.5f, 1.0f));
     ourShader->setMat4("model", model2);
     ourShader->setMat4("worldToLocalMatrix", glm::inverse(model2));
     ourShader->setVec3("minBound", min_bound[0], min_bound[1], min_bound[2]);
@@ -188,16 +210,30 @@ void ApplicationWindow::ConvertMeshToLibigl(
         throw std::invalid_argument("Vertices size must be divisible by stride");
     }
 
-    // Extract positions
+    // Extract positions and apply rotation
     int num_vertices = vertices.size() / vertex_stride;
     V.resize(num_vertices, 3);
+
+    // Create a 90-degree rotation matrix around the y-axis
+    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
     for (int i = 0; i < num_vertices; ++i) {
-        V(i, 0) = vertices[i * vertex_stride + 0]; // x
-        V(i, 1) = vertices[i * vertex_stride + 1]; // y
-        V(i, 2) = vertices[i * vertex_stride + 2]; // z
+        // Extract position (first 3 components)
+        glm::vec4 pos(vertices[i * vertex_stride + 0], // x
+            vertices[i * vertex_stride + 1], // y
+            vertices[i * vertex_stride + 2], // z
+            1.0f); // Homogeneous coordinate
+
+        // Apply rotation
+        glm::vec4 rotated_pos = rotation * pos;
+
+        // Store rotated position
+        V(i, 0) = rotated_pos.x;
+        V(i, 1) = rotated_pos.y;
+        V(i, 2) = rotated_pos.z;
     }
 
-    // Convert faces
+    // Convert faces (unchanged)
     if (is_quad_mesh) {
         if (indices.size() % 6 != 0) {
             throw std::invalid_argument("Quad mesh indices size must be divisible by 6");
@@ -275,6 +311,8 @@ Eigen::Vector3d max_bound)
     for (int i = 0; i < total_points; ++i) {
         sdf_values[i] = static_cast<float>(S(i));
     }
+
+    //visualizeSDF(P, S, V, F);
 }
 
 GLuint ApplicationWindow::CreateSDFTexture(const std::vector<float>& sdf_values, const Eigen::Vector3i& grid_res)

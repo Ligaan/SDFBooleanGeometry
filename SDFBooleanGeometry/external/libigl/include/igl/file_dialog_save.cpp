@@ -54,7 +54,8 @@ IGL_INLINE std::string igl::file_dialog_save()
   // (code contributed by Tino Weinkauf)
 
   OPENFILENAME ofn;       // common dialog box structure
-  char szFile[260];       // buffer for file name
+  wchar_t szFile[260] = L"";       // buffer for file name
+  wchar_t filter[] = L"OFF Files (*.off)\0*.off\0All Files (*.*)\0*.*\0";
 
   // Initialize OPENFILENAME
   ZeroMemory(&ofn, sizeof(ofn));
@@ -65,7 +66,7 @@ IGL_INLINE std::string igl::file_dialog_save()
   // use the contents of szFile to initialize itself.
   ofn.lpstrFile[0] = '\0';
   ofn.nMaxFile = sizeof(szFile);
-  ofn.lpstrFilter = "";
+  ofn.lpstrFilter = filter;
   ofn.nFilterIndex = 1;
   ofn.lpstrFileTitle = NULL;
   ofn.nMaxFileTitle = 0;
