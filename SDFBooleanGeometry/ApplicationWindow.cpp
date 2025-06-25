@@ -27,9 +27,9 @@ void visualizeSDF(const Eigen::MatrixXd& P, const Eigen::VectorXd& S, const Eige
     double max_sdf = S.cwiseAbs().maxCoeff();
     for (int i = 0; i < P.rows(); ++i) {
         float normalized_sdf = (S(i) / max_sdf) * 0.5 + 0.5; // Map to [0,1]
-        colors(i, 0) = normalized_sdf; // Red: SDF value
-        colors(i, 1) = normalized_sdf; // Green: SDF value
-        colors(i, 2) = normalized_sdf; // Blue: SDF value
+        colors(i, 0) = /*normalized_sdf*/ S(i) <= 0 ? 1.0f : 0.0f; // Red: SDF value
+        colors(i, 1) = /*normalized_sdf*/S(i) <= 0 ? 1.0f : 0.0f;; // Green: SDF value
+        colors(i, 2) = /*normalized_sdf*/S(i) <= 0 ? 1.0f : 0.0f;; // Blue: SDF value
     }
     viewer.data().add_points(P, colors);
 
@@ -108,13 +108,24 @@ void ApplicationWindow::Initialize()
     Eigen::Vector3i grid_res(32, 32, 32);
 
     // Compute AABB for shape2
-    ComputeMeshAABB(shape2, min_bound, max_bound); // Assumes shape2 has a Mesh member
+    ComputeMeshAABB(shape1, min_bound1, max_bound1); // Assumes shape2 has a Mesh member
 
     glm::mat4 model2 = glm::mat4(1.0f); // Transform unused in ComputeSDFGrid
-    ComputeSDFGrid(shape2, model2, V, F, sdf_values, grid_res, min_bound, max_bound);
+    model2 = glm::translate(model2,glm::vec3(0.0f)); // Transform unused in ComputeSDFGrid
+    ComputeSDFGrid(shape1, model2, V, F, sdf_values, grid_res, min_bound1, max_bound1);
 
     // Create SDF texture
     texture1 = CreateSDFTexture(sdf_values, grid_res);
+
+    // Compute AABB for shape2
+    ComputeMeshAABB(shape2, min_bound2, max_bound2); // Assumes shape2 has a Mesh member
+
+    ComputeSDFGrid(shape2, model2, V, F, sdf_values, grid_res, min_bound2, max_bound2);
+
+    // Create SDF texture
+    texture2 = CreateSDFTexture(sdf_values, grid_res);
+
+
 }
 
 void ApplicationWindow::Update()
@@ -158,26 +169,37 @@ void ApplicationWindow::Render()
     // Set SDF texture
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_3D, texture1);
-    ourShader->setInt("sdfTexture", 0);
+    ourShader->setInt("sdfTexture1", 0);  // Tell shader that sdfTexture1 uses unit 0
+
+    // Bind second SDF texture to texture unit 1
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_3D, texture2);
+    ourShader->setInt("sdfTexture2", 1);  // Tell shader that sdfTexture2 uses unit 1
 
     // Render shape1 (sphere, no SDF)
     glm::mat4 model1 = glm::mat4(1.0f);
     glm::mat4 model2 = glm::mat4(1.0f);
-    model2 = glm::translate(model2, glm::vec3(4.5f, 1.5f, 2.0f));
+    model2 = glm::translate(model2, glm::vec3(0.0f, 0.0f, 0.0f));
     model1 = glm::translate(model1, glm::vec3(0.0f, 0.0f, 0.0f));
     ourShader->setMat4("model", model1);
-    ourShader->setMat4("worldToLocalMatrix", glm::inverse(model2)); // Dummy for shape1
-    ourShader->setVec3("minBound", min_bound[0], min_bound[1], min_bound[2]); // Dummy values
-    ourShader->setVec3("maxBound", max_bound[0], max_bound[1], max_bound[2]);
+    ourShader->setMat4("worldToLocalMatrix1", glm::inverse(model1)); // Dummy for shape1
+    ourShader->setVec3("minBound1", min_bound1[0], min_bound1[1], min_bound1[2]); // Dummy values
+    ourShader->setVec3("maxBound1", max_bound1[0], max_bound1[1], max_bound1[2]);
+    ourShader->setMat4("worldToLocalMatrix2", glm::inverse(model2));
+    ourShader->setVec3("minBound2", min_bound2[0], min_bound2[1], min_bound2[2]);
+    ourShader->setVec3("maxBound2", max_bound2[0], max_bound2[1], max_bound2[2]);
     glBindVertexArray(shape1.VAO);
     glDrawElements(GL_TRIANGLES, shape1.indexCount, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
     // Render shape2 (with SDF)
     ourShader->setMat4("model", model2);
-    ourShader->setMat4("worldToLocalMatrix", glm::inverse(model2));
-    ourShader->setVec3("minBound", min_bound[0], min_bound[1], min_bound[2]);
-    ourShader->setVec3("maxBound", max_bound[0], max_bound[1], max_bound[2]);
+    ourShader->setMat4("worldToLocalMatrix1", glm::inverse(model1));
+    ourShader->setVec3("minBound1", min_bound1[0], min_bound1[1], min_bound1[2]);
+    ourShader->setVec3("maxBound1", max_bound1[0], max_bound1[1], max_bound1[2]);
+    ourShader->setMat4("worldToLocalMatrix2", glm::inverse(model2));
+    ourShader->setVec3("minBound2", min_bound2[0], min_bound2[1], min_bound2[2]);
+    ourShader->setVec3("maxBound2", max_bound2[0], max_bound2[1], max_bound2[2]);
     glBindVertexArray(shape2.VAO);
     glDrawElements(GL_TRIANGLES, shape2.indexCount, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
@@ -365,7 +387,7 @@ void ApplicationWindow::ComputeMeshAABB(const Mesh& mesh, Eigen::Vector3d& min_b
     }
 
     // Add small padding to ensure SDF captures surface
-    Eigen::Vector3d padding(0.1, 0.1, 0.1); // Adjust as needed
+    Eigen::Vector3d padding(0.0, 0.0, 0.0); // Adjust as needed
     min_bound -= padding;
     max_bound += padding;
 }

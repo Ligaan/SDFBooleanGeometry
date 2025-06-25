@@ -71,6 +71,6 @@ public:
     Mesh shape1, shape2;
     std::vector<Mesh> face;
     GLuint texture1, texture2;
-    Eigen::Vector3d min_bound, max_bound; // Store SDF bounds for rendering
+    Eigen::Vector3d min_bound1, max_bound1,min_bound2,max_bound2; // Store SDF bounds for rendering
 };
 
