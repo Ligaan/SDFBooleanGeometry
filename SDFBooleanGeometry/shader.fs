@@ -8,13 +8,13 @@ in vec3 FragPos;
 struct Light {
     vec3 direction;
     vec3 color;
-    float ambientStrength;
-    float diffuseStrength;
+    double ambientStrength;
+    double diffuseStrength;
 };
 
 uniform vec3 viewPos;
 uniform Light light;
-uniform float Multi = 1.0;
+uniform double Multi = 1.0;
 uniform sampler3D sdfTexture1;
 uniform sampler3D sdfTexture2;
 uniform mat4 worldToLocalMatrix1;
@@ -24,7 +24,7 @@ uniform vec3 maxBound1;
 uniform vec3 minBound2;
 uniform vec3 maxBound2;
 
-float SDF(vec3 worldPos,mat4 worldToLocalMatrix,vec3 minBound,vec3 maxBound,sampler3D sdfTexture) {
+double SDF(vec3 worldPos,mat4 worldToLocalMatrix,vec3 minBound,vec3 maxBound,sampler3D sdfTexture) {
     // Transform world-space position to local space
     vec4 localPosHomogeneous = worldToLocalMatrix * vec4(worldPos, 1.0);
     vec3 localPos = localPosHomogeneous.xyz / localPosHomogeneous.w;
@@ -46,16 +46,16 @@ void main() {
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(-light.direction);
     vec3 ambient = light.ambientStrength * light.color * ourColor;
-    float diff = max(dot(norm, lightDir), 0.0);
+    double diff = max(dot(norm, lightDir), 0.0);
     vec3 diffuse = light.diffuseStrength * light.color * diff * ourColor;
 
     vec3 result = ambient + diffuse;
 
     // Check if within SDF texture bounds
 
-        const float EPSILON = 1e-3;
-        float sdfValue1 = SDF(FragPos,worldToLocalMatrix1,minBound1,maxBound1,sdfTexture1);
-        float sdfValue2 = SDF(FragPos,worldToLocalMatrix2,minBound2,maxBound2,sdfTexture2);
+        const double EPSILON = 1e-3;
+        double sdfValue1 = SDF(FragPos,worldToLocalMatrix1,minBound1,maxBound1,sdfTexture1);
+        double sdfValue2 = SDF(FragPos,worldToLocalMatrix2,minBound2,maxBound2,sdfTexture2);
 
         bool a1=true;
         bool a2=true;

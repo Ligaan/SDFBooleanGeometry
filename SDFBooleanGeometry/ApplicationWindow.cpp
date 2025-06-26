@@ -18,14 +18,14 @@
 
 //#include <algorithm> // For std::min, std::max
 
-float GetSDFValue(
-    const std::vector<float>& sdf_values,
+double GetSDFValue(
+    const std::vector<double>& sdf_values,
     const Eigen::Vector3d& world_point,
     const Eigen::Vector3d& min_bound,
     const Eigen::Vector3d& max_bound,
     const Eigen::Vector3i& grid_res,
-    const glm::mat4& world_to_local_matrix,
-    float out_of_bounds_value)
+    const glm::dmat4& world_to_local_matrix,
+    double out_of_bounds_value)
 {
     // Step 1: Transform world-space point to local space
     glm::vec4 point(world_point.x(), world_point.y(), world_point.z(), 1.0f);
@@ -60,7 +60,7 @@ float GetSDFValue(
     }
 
     // Step 5: Get the 8 corner values of the grid cell
-    float values[8];
+    double values[8];
     int nx = grid_res[0], ny = grid_res[1], nz = grid_res[2];
     if (sdf_values.size() != static_cast<size_t>(nx * ny * nz)) {
         throw std::invalid_argument("SDF values size does not match grid resolution");
@@ -82,22 +82,22 @@ float GetSDFValue(
     }
 
     // Step 6: Trilinear interpolation
-    float c00 = values[0] * (1 - weights[0]) + values[1] * weights[0];
-    float c10 = values[2] * (1 - weights[0]) + values[3] * weights[0];
-    float c01 = values[4] * (1 - weights[0]) + values[5] * weights[0];
-    float c11 = values[6] * (1 - weights[0]) + values[7] * weights[0];
+    double c00 = values[0] * (1 - weights[0]) + values[1] * weights[0];
+    double c10 = values[2] * (1 - weights[0]) + values[3] * weights[0];
+    double c01 = values[4] * (1 - weights[0]) + values[5] * weights[0];
+    double c11 = values[6] * (1 - weights[0]) + values[7] * weights[0];
 
-    float c0 = c00 * (1 - weights[1]) + c10 * weights[1];
-    float c1 = c01 * (1 - weights[1]) + c11 * weights[1];
+    double c0 = c00 * (1 - weights[1]) + c10 * weights[1];
+    double c1 = c01 * (1 - weights[1]) + c11 * weights[1];
 
-    float sdf_value = c0 * (1 - weights[2]) + c1 * weights[2];
+    double sdf_value = c0 * (1 - weights[2]) + c1 * weights[2];
 
     return sdf_value;
 }
 
 void ComputeSDFWorldBounds(
     const std::vector<Mesh>& meshes,
-    const std::vector<glm::mat4>& transforms,
+    const std::vector<glm::dmat4>& transforms,
     double cube_size,
     Eigen::Vector3d& min_bound,
     Eigen::Vector3d& max_bound)
@@ -121,11 +121,11 @@ void ComputeSDFWorldBounds(
         std::numeric_limits<double>::lowest());
 
     // Define the 90-degree y-axis rotation matrix (as in ConvertMeshToLibigl)
-    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::dmat4 rotation = glm::rotate(glm::dmat4(1.0), glm::radians(90.0), glm::dvec3(0.0, 1.0, 0.0));
 
     for (size_t i = 0; i < meshes.size(); ++i) {
         const Mesh& mesh = meshes[i];
-        const glm::mat4& transform = transforms[i];
+        const glm::dmat4& transform = transforms[i];
 
         // Step 1: Compute local AABB
         Eigen::Vector3d local_min(std::numeric_limits<double>::max(),
@@ -220,14 +220,13 @@ void visualizeSDF(const Eigen::MatrixXd& P, const Eigen::VectorXd& S, const Eige
     Eigen::MatrixXd colors(P.rows(), 3);
     double max_sdf = S.cwiseAbs().maxCoeff();
     for (int i = 0; i < P.rows(); ++i) {
-        float normalized_sdf = (S(i) / max_sdf) * 0.5 + 0.5; // Map to [0,1]
+        double normalized_sdf = (S(i) / max_sdf) * 0.5 + 0.5; // Map to [0,1]
         colors(i, 0) = /*normalized_sdf*/ S(i) <= 0 ? 1.0f : 0.0f; // Red: SDF value
         colors(i, 1) = /*normalized_sdf*/S(i) <= 0 ? 1.0f : 0.0f;; // Green: SDF value
         colors(i, 2) = /*normalized_sdf*/S(i) <= 0 ? 1.0f : 0.0f;; // Blue: SDF value
     }
     viewer.data().add_points(P, colors);
 
-    // Launch viewer
     viewer.launch();
 }
 
@@ -236,13 +235,13 @@ void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
 void processInput(GLFWwindow* window);
 
-Camera ApplicationWindow::camera = Camera(glm::vec3(3.5f, 0.0f, 7.8f));        // Define the static Camera object
-float ApplicationWindow::lastX = 0.0f;   // Define and initialize static variables
-float ApplicationWindow::lastY = 0.0f;
+Camera ApplicationWindow::camera = Camera(glm::dvec3(3.5f, 0.0f, 7.8f));        // Define the static Camera object
+double ApplicationWindow::lastX = 0.0f;   // Define and initialize static variables
+double ApplicationWindow::lastY = 0.0f;
 bool ApplicationWindow::firstMouse = true;
 bool ApplicationWindow::buttonPressed = false;
-float ApplicationWindow::deltaTime = 0.0f;
-float ApplicationWindow::lastFrame = 0.0f;
+double ApplicationWindow::deltaTime = 0.0f;
+double ApplicationWindow::lastFrame = 0.0f;
 
 void ApplicationWindow::Initialize()
 {
@@ -286,8 +285,8 @@ void ApplicationWindow::Initialize()
     glEnable(GL_DEPTH_TEST);
 
     // Create shapes
-    shape1 = Shapes::CreateSphere(1.0f, 64, 64, glm::vec3(0.6f, 0.2f, 0.9f));
-    shape2 = Shapes::CreateBox(1.0f, 1.0f, 2.0f, glm::vec3(0.2f, 0.6f, 0.9f)); // Original size
+    shape1 = Shapes::CreateSphere(1.0f, 64, 64, glm::dvec3(0.6f, 0.2f, 0.9f));
+    shape2 = Shapes::CreateBox(1.0f, 1.0f, 2.0f, glm::dvec3(0.2f, 0.6f, 0.9f)); // Original size
 
     glBindVertexArray(shape1.VAO);
     glDrawElements(GL_TRIANGLES, shape1.indexCount, GL_UNSIGNED_INT, 0);
@@ -298,15 +297,15 @@ void ApplicationWindow::Initialize()
     // Compute SDF grid for shape2 (in local space)
     Eigen::MatrixXd V;
     Eigen::MatrixXi F;
-    std::vector<float> sdf_values1;
-    std::vector<float> sdf_values2;
-    Eigen::Vector3i grid_res(32, 32, 32);
+    std::vector<double> sdf_values1;
+    std::vector<double> sdf_values2;
+    Eigen::Vector3i grid_res(16, 16, 16);
 
     // Compute AABB for shape2
     ComputeMeshAABB(shape1, min_bound1, max_bound1); // Assumes shape2 has a Mesh member
 
-    glm::mat4 model2 = glm::mat4(1.0f); // Transform unused in ComputeSDFGrid
-    model2 = glm::translate(model2,glm::vec3(0.0f)); // Transform unused in ComputeSDFGrid
+    glm::dmat4 model2 = glm::dmat4(1.0f); // Transform unused in ComputeSDFGrid
+    model2 = glm::translate(model2,glm::dvec3(0.0f)); // Transform unused in ComputeSDFGrid
     ComputeSDFGrid(shape1, model2, V, F, sdf_values2, grid_res, min_bound1, max_bound1);
 
     // Create SDF texture
@@ -322,15 +321,15 @@ void ApplicationWindow::Initialize()
 
 
     //Cube marching
-    glm::mat4 model10 = glm::mat4(1.0f);
-    glm::mat4 model20 = glm::mat4(1.0f);
-    model20 = glm::translate(model20, glm::vec3(0.0f, 0.0f, 0.0f));
-    model10 = glm::translate(model10, glm::vec3(0.0f, 0.0f, 0.0f));
+    glm::dmat4 model10 = glm::dmat4(1.0f);
+    glm::dmat4 model20 = glm::dmat4(1.0f);
+    model20 = glm::translate(model20, glm::dvec3(0.0f, 0.0f, 0.0f));
+    model10 = glm::translate(model10, glm::dvec3(0.0f, 0.0f, 0.0f));
 
-    std::vector<Mesh> meshes;
+    /*std::vector<Mesh> meshes;
     meshes.push_back(shape1);
     meshes.push_back(shape2);
-    std::vector<glm::mat4>transforms;
+    std::vector<glm::dmat4>transforms;
     transforms.push_back(model10);
     transforms.push_back(model20);
     double cube_size = 0.1f;
@@ -349,14 +348,14 @@ void ApplicationWindow::Initialize()
                 std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;
             }
         }
-    }
+    }*/
 }
 
 void ApplicationWindow::Update()
 {
     while (!glfwWindowShouldClose(window))
     {
-        float currentFrame = static_cast<float>(glfwGetTime());
+        double currentFrame = static_cast<double>(glfwGetTime());
         deltaTime = currentFrame - lastFrame;
         lastFrame = currentFrame;
 
@@ -377,8 +376,8 @@ void ApplicationWindow::Render()
     ourShader->use();
 
     // Set view/projection
-    glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 100.0f);
-    glm::mat4 view = camera.GetViewMatrix();
+    glm::dmat4 projection = glm::perspective(glm::radians(camera.Zoom), (double)SCR_WIDTH / (double)SCR_HEIGHT, 0.1, 100.0);
+    glm::dmat4 view = camera.GetViewMatrix();
     ourShader->setMat4("projection", projection);
     ourShader->setMat4("view", view);
     ourShader->setFloat("Multi", 1.0f);
@@ -401,10 +400,10 @@ void ApplicationWindow::Render()
     ourShader->setInt("sdfTexture2", 1);  // Tell shader that sdfTexture2 uses unit 1
 
     // Render shape1 (sphere, no SDF)
-    glm::mat4 model1 = glm::mat4(1.0f);
-    glm::mat4 model2 = glm::mat4(1.0f);
-    model2 = glm::translate(model2, glm::vec3(0.0f, 0.0f, 0.0f));
-    model1 = glm::translate(model1, glm::vec3(0.0f, 0.0f, 0.0f));
+    glm::dmat4 model1 = glm::dmat4(1.0f);
+    glm::dmat4 model2 = glm::dmat4(1.0f);
+    model2 = glm::translate(model2, glm::dvec3(0.0f, 0.0f, 0.0f));
+    model1 = glm::translate(model1, glm::dvec3(0.0f, 0.0f, 0.0f));
     ourShader->setMat4("model", model1);
     ourShader->setMat4("worldToLocalMatrix1", glm::inverse(model1)); // Dummy for shape1
     ourShader->setVec3("minBound1", min_bound1[0], min_bound1[1], min_bound1[2]); // Dummy values
@@ -441,7 +440,7 @@ void ApplicationWindow::Shutdown()
 }
 
 void ApplicationWindow::ConvertMeshToLibigl(
-    const std::vector<float>& vertices,
+    const std::vector<double>& vertices,
     const std::vector<unsigned int>& indices,
     Eigen::MatrixXd& V,
     Eigen::MatrixXi& F,
@@ -461,7 +460,7 @@ void ApplicationWindow::ConvertMeshToLibigl(
     V.resize(num_vertices, 3);
 
     // Create a 90-degree rotation matrix around the y-axis
-    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    glm::dmat4 rotation = glm::rotate(glm::dmat4(1.0), glm::radians(90.0), glm::dvec3(0.0, 1.0, 0.0));
 
     for (int i = 0; i < num_vertices; ++i) {
         // Extract position (first 3 components)
@@ -474,9 +473,9 @@ void ApplicationWindow::ConvertMeshToLibigl(
         glm::vec4 rotated_pos = rotation * pos;
 
         // Store rotated position
-        V(i, 0) = rotated_pos.x;
-        V(i, 1) = rotated_pos.y;
-        V(i, 2) = rotated_pos.z;
+        V(i, 0) = pos.x;
+        V(i, 1) = pos.y;
+        V(i, 2) = pos.z;
     }
 
     // Convert faces (unchanged)
@@ -510,10 +509,10 @@ void ApplicationWindow::ConvertMeshToLibigl(
 }
 
 void ApplicationWindow::ComputeSDFGrid(const Mesh& mesh,
-const glm::mat4& transform, // Unused, kept for compatibility
+const glm::dmat4& transform, // Unused, kept for compatibility
 Eigen::MatrixXd& V,
 Eigen::MatrixXi& F,
-std::vector<float>& sdf_values,
+std::vector<double>& sdf_values,
 Eigen::Vector3i grid_res,
 Eigen::Vector3d min_bound,
 Eigen::Vector3d max_bound)
@@ -555,13 +554,13 @@ Eigen::Vector3d max_bound)
     igl::signed_distance(P, V, F, igl::SIGNED_DISTANCE_TYPE_PSEUDONORMAL, S, I, C, N);
 
     for (int i = 0; i < total_points; ++i) {
-        sdf_values[i] = static_cast<float>(S(i));
+        sdf_values[i] = static_cast<double>(S(i));
     }
 
-    //visualizeSDF(P, S, V, F);
+    visualizeSDF(P, S, V, F);
 }
 
-GLuint ApplicationWindow::CreateSDFTexture(const std::vector<float>& sdf_values, const Eigen::Vector3i& grid_res)
+GLuint ApplicationWindow::CreateSDFTexture(const std::vector<double>& sdf_values, const Eigen::Vector3i& grid_res)
 {
     if (grid_res[0] <= 0 || grid_res[1] <= 0 || grid_res[2] <= 0) {
         throw std::invalid_argument("Grid resolution must be positive");
@@ -651,8 +650,8 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height)
 // -------------------------------------------------------
 void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
 {
-    float xpos = static_cast<float>(xposIn);
-    float ypos = static_cast<float>(yposIn);
+    double xpos = static_cast<double>(xposIn);
+    double ypos = static_cast<double>(yposIn);
 
     if (ApplicationWindow::firstMouse)
     {
@@ -661,8 +660,8 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
         ApplicationWindow::firstMouse = false;
     }
 
-    float xoffset = xpos - ApplicationWindow::lastX;
-    float yoffset = ApplicationWindow::lastY - ypos; // reversed since y-coordinates go from bottom to top
+    double xoffset = xpos - ApplicationWindow::lastX;
+    double yoffset = ApplicationWindow::lastY - ypos; // reversed since y-coordinates go from bottom to top
 
     ApplicationWindow::lastX = xpos;
     ApplicationWindow::lastY = ypos;
@@ -674,5 +673,5 @@ void mouse_callback(GLFWwindow* window, double xposIn, double yposIn)
 // ----------------------------------------------------------------------
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
-    ApplicationWindow::camera.ProcessMouseScroll(static_cast<float>(yoffset));
+    ApplicationWindow::camera.ProcessMouseScroll(static_cast<double>(yoffset));
 }
