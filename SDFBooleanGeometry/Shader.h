@@ -89,27 +89,25 @@ public:
         glUniform1i(glGetUniformLocation(ID, name.c_str()), value);
     }
     // ------------------------------------------------------------------------
-    void setFloat(const std::string& name, double value) const
+    void setFloat(const std::string& name, float value) const
     {
         glUniform1f(glGetUniformLocation(ID, name.c_str()), value);
     }
     // ------------------------------------------------------------------------
-    void setVec2(const std::string& name, const glm::dvec2& value) const
+    void setVec2(const std::string& name, const glm::vec2& value) const
     {
-        float x = static_cast<float>(value[0]);
-        glUniform2fv(glGetUniformLocation(ID, name.c_str()), 1, &x);
+        glUniform2fv(glGetUniformLocation(ID, name.c_str()), 1, &value[0]);
     }
-    void setVec2(const std::string& name, double x, double y) const
+    void setVec2(const std::string& name, float x, float y) const
     {
         glUniform2f(glGetUniformLocation(ID, name.c_str()), x, y);
     }
     // ------------------------------------------------------------------------
-    void setVec3(const std::string& name, const glm::dvec3& value) const
+    void setVec3(const std::string& name, const glm::vec3& value) const
     {
-        float x = static_cast<float>(value[0]);
-        glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, &x);
+        glUniform3fv(glGetUniformLocation(ID, name.c_str()), 1, &value[0]);
     }
-    void setVec3(const std::string& name, double x, double y, double z) const
+    void setVec3(const std::string& name, float x, float y, float z) const
     {
         glUniform3f(glGetUniformLocation(ID, name.c_str()), x, y, z);
     }
@@ -118,7 +116,7 @@ public:
     {
         glUniform4fv(glGetUniformLocation(ID, name.c_str()), 1, &value[0]);
     }
-    void setVec4(const std::string& name, double x, double y, double z, double w) const
+    void setVec4(const std::string& name, float x, float y, float z, float w) const
     {
         glUniform4f(glGetUniformLocation(ID, name.c_str()), x, y, z, w);
     }
@@ -133,10 +131,9 @@ public:
         glUniformMatrix3fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &mat[0][0]);
     }
     // ------------------------------------------------------------------------
-    void setMat4(const std::string& name, const glm::dmat4& mat) const
+    void setMat4(const std::string& name, const glm::mat4& mat) const
     {
-        float x = static_cast<float>(mat[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &x);
+        glUniformMatrix4fv(glGetUniformLocation(ID, name.c_str()), 1, GL_FALSE, &mat[0][0]);
     }
 
 private:
