@@ -16,6 +16,200 @@
 #include <Eigen/Dense>
 #include <igl/opengl/glfw/Viewer.h>
 
+//#include <algorithm> // For std::min, std::max
+
+float GetSDFValue(
+    const std::vector<float>& sdf_values,
+    const Eigen::Vector3d& world_point,
+    const Eigen::Vector3d& min_bound,
+    const Eigen::Vector3d& max_bound,
+    const Eigen::Vector3i& grid_res,
+    const glm::mat4& world_to_local_matrix,
+    float out_of_bounds_value)
+{
+    // Step 1: Transform world-space point to local space
+    glm::vec4 point(world_point.x(), world_point.y(), world_point.z(), 1.0f);
+    glm::vec4 local_point = world_to_local_matrix * point;
+    Eigen::Vector3d local(local_point.x, local_point.y, local_point.z);
+
+    // Step 2: Check if point is outside AABB
+    for (int i = 0; i < 3; ++i) {
+        if (local[i] < min_bound[i] || local[i] > max_bound[i]) {
+            return out_of_bounds_value; // Return custom value for out-of-bounds points
+        }
+    }
+
+    // Step 3: Map local point to grid coordinates
+    Eigen::Vector3d normalized;
+    for (int i = 0; i < 3; ++i) {
+        if (max_bound[i] == min_bound[i]) {
+            throw std::invalid_argument("AABB bounds are invalid (max_bound equals min_bound)");
+        }
+        normalized[i] = (local[i] - min_bound[i]) / (max_bound[i] - min_bound[i]);
+        normalized[i] *= (grid_res[i] - 1);
+    }
+
+    // Step 4: Compute grid indices and interpolation weights
+    Eigen::Vector3i idx;
+    Eigen::Vector3d weights;
+    for (int i = 0; i < 3; ++i) {
+        idx[i] = static_cast<int>(std::floor(normalized[i]));
+        weights[i] = normalized[i] - idx[i];
+        // Clamp indices to ensure they stay within bounds
+        idx[i] = std::max(0, std::min(grid_res[i] - 1, idx[i]));
+    }
+
+    // Step 5: Get the 8 corner values of the grid cell
+    float values[8];
+    int nx = grid_res[0], ny = grid_res[1], nz = grid_res[2];
+    if (sdf_values.size() != static_cast<size_t>(nx * ny * nz)) {
+        throw std::invalid_argument("SDF values size does not match grid resolution");
+    }
+
+    int indices[8] = {
+        (idx[2] + 0) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 0),
+        (idx[2] + 0) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 1),
+        (idx[2] + 0) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 0),
+        (idx[2] + 0) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 1),
+        (idx[2] + 1) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 0),
+        (idx[2] + 1) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 1),
+        (idx[2] + 1) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 0),
+        (idx[2] + 1) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 1)
+    };
+
+    for (int i = 0; i < 8; ++i) {
+        values[i] = sdf_values[indices[i]];
+    }
+
+    // Step 6: Trilinear interpolation
+    float c00 = values[0] * (1 - weights[0]) + values[1] * weights[0];
+    float c10 = values[2] * (1 - weights[0]) + values[3] * weights[0];
+    float c01 = values[4] * (1 - weights[0]) + values[5] * weights[0];
+    float c11 = values[6] * (1 - weights[0]) + values[7] * weights[0];
+
+    float c0 = c00 * (1 - weights[1]) + c10 * weights[1];
+    float c1 = c01 * (1 - weights[1]) + c11 * weights[1];
+
+    float sdf_value = c0 * (1 - weights[2]) + c1 * weights[2];
+
+    return sdf_value;
+}
+
+void ComputeSDFWorldBounds(
+    const std::vector<Mesh>& meshes,
+    const std::vector<glm::mat4>& transforms,
+    double cube_size,
+    Eigen::Vector3d& min_bound,
+    Eigen::Vector3d& max_bound)
+{
+    if (meshes.size() != transforms.size()) {
+        throw std::invalid_argument("Number of meshes must match number of transforms");
+    }
+    if (meshes.empty()) {
+        throw std::invalid_argument("Mesh list cannot be empty");
+    }
+    if (cube_size <= 0.0) {
+        throw std::invalid_argument("Cube size must be positive");
+    }
+
+    // Initialize bounds to extreme values
+    min_bound = Eigen::Vector3d(std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::max(),
+        std::numeric_limits<double>::max());
+    max_bound = Eigen::Vector3d(std::numeric_limits<double>::lowest(),
+        std::numeric_limits<double>::lowest(),
+        std::numeric_limits<double>::lowest());
+
+    // Define the 90-degree y-axis rotation matrix (as in ConvertMeshToLibigl)
+    glm::mat4 rotation = glm::rotate(glm::mat4(1.0f), glm::radians(90.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    for (size_t i = 0; i < meshes.size(); ++i) {
+        const Mesh& mesh = meshes[i];
+        const glm::mat4& transform = transforms[i];
+
+        // Step 1: Compute local AABB
+        Eigen::Vector3d local_min(std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::max());
+        Eigen::Vector3d local_max(std::numeric_limits<double>::lowest(),
+            std::numeric_limits<double>::lowest(),
+            std::numeric_limits<double>::lowest());
+
+        if (mesh.vertices.empty()) {
+            throw std::invalid_argument("Mesh vertices cannot be empty");
+        }
+
+        // Assume vertices are [x, y, z, ...] with stride 9 (position, normal, color)
+        for (size_t j = 0; j < mesh.vertices.size(); j += 9) {
+            Eigen::Vector3d vertex(mesh.vertices[j], mesh.vertices[j + 1], mesh.vertices[j + 2]);
+            local_min = local_min.cwiseMin(vertex);
+            local_max = local_max.cwiseMax(vertex);
+        }
+
+        // Step 2: Apply 90-degree y-axis rotation to AABB corners
+        std::vector<Eigen::Vector3d> corners = {
+            {local_min.x(), local_min.y(), local_min.z()},
+            {local_max.x(), local_min.y(), local_min.z()},
+            {local_min.x(), local_max.y(), local_min.z()},
+            {local_max.x(), local_max.y(), local_min.z()},
+            {local_min.x(), local_min.y(), local_max.z()},
+            {local_max.x(), local_min.y(), local_max.z()},
+            {local_min.x(), local_max.y(), local_max.z()},
+            {local_max.x(), local_max.y(), local_max.z()}
+        };
+
+        Eigen::Vector3d rotated_min(std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::max());
+        Eigen::Vector3d rotated_max(std::numeric_limits<double>::lowest(),
+            std::numeric_limits<double>::lowest(),
+            std::numeric_limits<double>::lowest());
+
+        for (const auto& corner : corners) {
+            glm::vec4 pos(corner.x(), corner.y(), corner.z(), 1.0f);
+            glm::vec4 rotated_pos = rotation * pos;
+            Eigen::Vector3d rotated_corner(rotated_pos.x, rotated_pos.y, rotated_pos.z);
+            rotated_min = rotated_min.cwiseMin(rotated_corner);
+            rotated_max = rotated_max.cwiseMax(rotated_corner);
+        }
+
+        // Step 3: Apply world-space transformation
+        Eigen::Vector3d world_min(std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::max());
+        Eigen::Vector3d world_max(std::numeric_limits<double>::lowest(),
+            std::numeric_limits<double>::lowest(),
+            std::numeric_limits<double>::lowest());
+
+        for (const auto& corner : corners) {
+            glm::vec4 pos(corner.x(), corner.y(), corner.z(), 1.0f);
+            // Apply rotation first, then world transform
+            glm::vec4 rotated_pos = rotation * pos;
+            glm::vec4 world_pos = transform * rotated_pos;
+            Eigen::Vector3d world_corner(world_pos.x, world_pos.y, world_pos.z);
+            world_min = world_min.cwiseMin(world_corner);
+            world_max = world_max.cwiseMax(world_corner);
+        }
+
+        // Step 4: Update global bounds
+        min_bound = min_bound.cwiseMin(world_min);
+        max_bound = max_bound.cwiseMax(world_max);
+    }
+
+    // Step 5: Adjust bounds to be divisible by cube_size
+    Eigen::Vector3d extent = max_bound - min_bound;
+    for (int i = 0; i < 3; ++i) {
+        // Calculate number of cubes needed (round up to ensure coverage)
+        int num_cubes = static_cast<int>(std::ceil(extent[i] / cube_size));
+        // New extent must be a multiple of cube_size
+        double new_extent = num_cubes * cube_size;
+        // Center the adjusted bounds around the original AABB
+        double center = (min_bound[i] + max_bound[i]) / 2.0;
+        min_bound[i] = center - new_extent / 2.0;
+        max_bound[i] = center + new_extent / 2.0;
+    }
+}
+
 void visualizeSDF(const Eigen::MatrixXd& P, const Eigen::VectorXd& S, const Eigen::MatrixXd& V, const Eigen::MatrixXi& F) {
     igl::opengl::glfw::Viewer viewer;
 
@@ -104,7 +298,8 @@ void ApplicationWindow::Initialize()
     // Compute SDF grid for shape2 (in local space)
     Eigen::MatrixXd V;
     Eigen::MatrixXi F;
-    std::vector<float> sdf_values;
+    std::vector<float> sdf_values1;
+    std::vector<float> sdf_values2;
     Eigen::Vector3i grid_res(32, 32, 32);
 
     // Compute AABB for shape2
@@ -112,20 +307,49 @@ void ApplicationWindow::Initialize()
 
     glm::mat4 model2 = glm::mat4(1.0f); // Transform unused in ComputeSDFGrid
     model2 = glm::translate(model2,glm::vec3(0.0f)); // Transform unused in ComputeSDFGrid
-    ComputeSDFGrid(shape1, model2, V, F, sdf_values, grid_res, min_bound1, max_bound1);
+    ComputeSDFGrid(shape1, model2, V, F, sdf_values2, grid_res, min_bound1, max_bound1);
 
     // Create SDF texture
-    texture1 = CreateSDFTexture(sdf_values, grid_res);
+    texture1 = CreateSDFTexture(sdf_values2, grid_res);
 
     // Compute AABB for shape2
     ComputeMeshAABB(shape2, min_bound2, max_bound2); // Assumes shape2 has a Mesh member
 
-    ComputeSDFGrid(shape2, model2, V, F, sdf_values, grid_res, min_bound2, max_bound2);
+    ComputeSDFGrid(shape2, model2, V, F, sdf_values1, grid_res, min_bound2, max_bound2);
 
     // Create SDF texture
-    texture2 = CreateSDFTexture(sdf_values, grid_res);
+    texture2 = CreateSDFTexture(sdf_values1, grid_res);
 
 
+    //Cube marching
+    glm::mat4 model10 = glm::mat4(1.0f);
+    glm::mat4 model20 = glm::mat4(1.0f);
+    model20 = glm::translate(model20, glm::vec3(0.0f, 0.0f, 0.0f));
+    model10 = glm::translate(model10, glm::vec3(0.0f, 0.0f, 0.0f));
+
+    std::vector<Mesh> meshes;
+    meshes.push_back(shape1);
+    meshes.push_back(shape2);
+    std::vector<glm::mat4>transforms;
+    transforms.push_back(model10);
+    transforms.push_back(model20);
+    double cube_size = 0.1f;
+    Eigen::Vector3d min_bound;
+    Eigen::Vector3d max_bound;
+    ComputeSDFWorldBounds(meshes, transforms, cube_size, min_bound, max_bound);
+    int sizeX = abs(min_bound[0] - max_bound[0])/ cube_size, sizeY = abs(min_bound[1] - max_bound[1])/ cube_size, sizeZ = abs(min_bound[2] - max_bound[2])/ cube_size;
+    VoxelArray = new Dynamic3DArray(sizeX, sizeY, sizeZ, 1000);
+
+    for (int i = 0;i < sizeX;i++) {
+        for (int j = 0;j < sizeY;j++) {
+            for (int k = 0;k < sizeZ;k++) {
+                const Eigen::Vector3d WorldPoint = min_bound + Eigen::Vector3d(i,j,k) * cube_size;
+                (*VoxelArray)(i, j, k) =std::max(GetSDFValue(sdf_values1, WorldPoint,min_bound1,max_bound1,grid_res, model10,100), GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20,100));
+
+                std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;
+            }
+        }
+    }
 }
 
 void ApplicationWindow::Update()
