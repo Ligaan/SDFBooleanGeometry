@@ -68,12 +68,14 @@ void main() {
             a2 = false;
         }
 
-        if(a1 && a2){
-            result = vec3(1.0, 0.0, 0.0);
-        }else{
-            result = vec3(0.0, 1.0, 0.0);
-        }
+        //if(a1 && a2){
+         //   result = vec3(1.0, 0.0, 0.0);
+        //}else{
+        //    result = vec3(0.0, 1.0, 0.0);
+        //}
+        result = (ambient + diffuse);
 
+        //Old
         //if (sdfValue < -EPSILON) {
             // inside
             //result = vec3(1.0, 0.0, 0.0);

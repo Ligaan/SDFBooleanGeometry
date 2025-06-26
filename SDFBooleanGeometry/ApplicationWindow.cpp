@@ -16,7 +16,152 @@
 #include <Eigen/Dense>
 #include <igl/opengl/glfw/Viewer.h>
 
-//#include <algorithm> // For std::min, std::max
+// Compute triangle normal from three vertices
+glm::vec3 computeTriangleNormal(const Eigen::Vector3d& v0, const Eigen::Vector3d& v1, const Eigen::Vector3d& v2) {
+    Eigen::Vector3d edge1 = v1 - v0;
+    Eigen::Vector3d edge2 = v2 - v0;
+    Eigen::Vector3d normal = edge1.cross(edge2);
+    glm::vec3 glm_normal(normal.x(), normal.y(), normal.z());
+    return glm::normalize(glm_normal);
+}
+
+void buildMeshFromGrid(Dynamic3DArray& array, Mesh& mesh,
+    float threshold, float cube_size, const Eigen::Vector3d& min_bound,
+    const glm::vec3& color) {
+    // Clear mesh
+    mesh.vertices.clear();
+    mesh.indices.clear();
+    mesh.indexCount = 0;
+
+    int nx = array.get_nx();
+    int ny = array.get_ny();
+    int nz = array.get_nz();
+
+    // Track global vertex index
+    unsigned int vertex_index = 0;
+
+    // Corner offsets matching the bit ordering
+    const Eigen::Vector3d corner_offsets[8] = {
+        {0, 0, 0},     // 0: (i, j, k)
+        {0, 0, 1},     // 1: (i, j, k+1)
+        {1, 0, 1},     // 2: (i+1, j, k+1)
+        {1, 0, 0},     // 3: (i+1, j, k)
+        {0, 1, 0},     // 4: (i, j+1, k)
+        {0, 1, 1},     // 5: (i, j+1, k+1)
+        {1, 1, 1},     // 6: (i+1, j+1, k+1)
+        {1, 1, 0}      // 7: (i+1, j+1, k)
+    };
+
+    // Edge definitions: each edge is a pair of corner indices
+    const std::pair<int, int> edges[12] = {
+        {0, 1},  // 0: (i,j,k) to (i,j,k+1)
+        {1, 2},  // 1: (i,j,k+1) to (i+1,j,k+1)
+        {2, 3},  // 2: (i+1,j,k+1) to (i+1,j,k)
+        {3, 0},  // 3: (i+1,j,k) to (i,j,k)
+        {4, 5},  // 4: (i,j+1,k) to (i,j+1,k+1)
+        {5, 6},  // 5: (i,j+1,k+1) to (i+1,j+1,k+1)
+        {6, 7},  // 6: (i+1,j+1,k+1) to (i+1,j+1,k)
+        {7, 4},  // 7: (i+1,j+1,k) to (i,j+1,k)
+        {0, 4},  // 8: (i,j,k) to (i,j+1,k)
+        {1, 5},  // 9: (i,j,k+1) to (i,j+1,k+1)
+        {2, 6},  // 10: (i+1,j,k+1) to (i+1,j+1,k+1)
+        {3, 7}   // 11: (i+1,j,k) to (i+1,j+1,k)
+    };
+
+    // Iterate cubes
+    for (int i = 0; i < nx - 1; ++i) {
+        for (int j = 0; j < ny - 1; ++j) {
+            for (int k = 0; k < nz - 1; ++k) {
+                // Compute 8-bit cube index
+                uint8_t cube_index = 0;
+                cube_index |= (array(i, j, k) <= threshold) << 0;          // Bit 0
+                cube_index |= (array(i, j, k + 1) <= threshold) << 1;      // Bit 1
+                cube_index |= (array(i + 1, j, k + 1) <= threshold) << 2;  // Bit 2
+                cube_index |= (array(i + 1, j, k) <= threshold) << 3;      // Bit 3
+                cube_index |= (array(i, j + 1, k) <= threshold) << 4;      // Bit 4
+                cube_index |= (array(i, j + 1, k + 1) <= threshold) << 5;  // Bit 5
+                cube_index |= (array(i + 1, j + 1, k + 1) <= threshold) << 6; // Bit 6
+                cube_index |= (array(i + 1, j + 1, k) <= threshold) << 7;  // Bit 7
+
+                // Get triangulation (up to 15 edge indices for 5 triangles)
+                const int* tri = triangulations[cube_index];
+                if (tri[0] == -1) { // No triangles for this case
+                    continue;
+                }
+
+                // Cube origin in world space
+                Eigen::Vector3d cube_origin = min_bound + Eigen::Vector3d(i, j, k) * cube_size;
+
+                // Process triangles (3 edge indices at a time)
+                for (int t = 0; t < 15 && tri[t] != -1; t += 3) {
+                    if (tri[t] < 0 || tri[t + 1] < 0 || tri[t + 2] < 0) {
+                        continue; // Skip invalid triangles
+                    }
+
+                    // Get edge midpoints for the triangle (reversed winding: v0, v2, v1)
+                    Eigen::Vector3d v0 = cube_origin + (corner_offsets[edges[tri[t]].first] + corner_offsets[edges[tri[t]].second]) * cube_size * 0.5;
+                    Eigen::Vector3d v1 = cube_origin + (corner_offsets[edges[tri[t + 2]].first] + corner_offsets[edges[tri[t + 2]].second]) * cube_size * 0.5; // Swapped
+                    Eigen::Vector3d v2 = cube_origin + (corner_offsets[edges[tri[t + 1]].first] + corner_offsets[edges[tri[t + 1]].second]) * cube_size * 0.5; // Swapped
+
+                    // Compute triangle normal
+                    glm::vec3 normal = computeTriangleNormal(v0, v1, v2);
+
+                    // Add vertices for the triangle (v0, v2, v1 order)
+                    for (int vi = 0; vi < 3; ++vi) {
+                        int edge_idx = (vi == 0) ? tri[t] : (vi == 1) ? tri[t + 2] : tri[t + 1]; // v0, v2, v1
+                        Eigen::Vector3d pos = cube_origin + (corner_offsets[edges[edge_idx].first] + corner_offsets[edges[edge_idx].second]) * cube_size * 0.5;
+                        mesh.vertices.push_back(pos.x());
+                        mesh.vertices.push_back(pos.y());
+                        mesh.vertices.push_back(pos.z());
+                        mesh.vertices.push_back(normal.x);
+                        mesh.vertices.push_back(normal.y);
+                        mesh.vertices.push_back(normal.z);
+                        mesh.vertices.push_back(color.r);
+                        mesh.vertices.push_back(color.g);
+                        mesh.vertices.push_back(color.b);
+                        mesh.indices.push_back(vertex_index++);
+                    }
+                }
+            }
+        }
+    }
+
+    // Setup OpenGL buffers
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
+
+    glGenVertexArrays(1, &mesh.VAO);
+    glGenBuffers(1, &mesh.VBO);
+    glGenBuffers(1, &mesh.EBO);
+
+    glBindVertexArray(mesh.VAO);
+
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.VBO);
+    glBufferData(GL_ARRAY_BUFFER, mesh.vertices.size() * sizeof(float),
+        mesh.vertices.data(), GL_DYNAMIC_DRAW);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.EBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, mesh.indices.size() * sizeof(unsigned int),
+        mesh.indices.data(), GL_DYNAMIC_DRAW);
+
+    // Position: location = 0
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(0);
+
+    // Normal: location = 1
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(3 * sizeof(float)));
+    glEnableVertexAttribArray(1);
+
+    // Color: location = 2
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(float), (void*)(6 * sizeof(float)));
+    glEnableVertexAttribArray(2);
+
+    glBindVertexArray(0);
+
+    mesh.indexCount = static_cast<GLsizei>(mesh.indices.size());
+}
+
 
 float GetSDFValue(
     const std::vector<float>& sdf_values,
@@ -24,42 +169,53 @@ float GetSDFValue(
     const Eigen::Vector3d& min_bound,
     const Eigen::Vector3d& max_bound,
     const Eigen::Vector3i& grid_res,
-    const glm::mat4& world_to_local_matrix,
-    float out_of_bounds_value)
+    const glm::mat4& world_to_local_matrix)
 {
     // Step 1: Transform world-space point to local space
     glm::vec4 point(world_point.x(), world_point.y(), world_point.z(), 1.0f);
     glm::vec4 local_point = world_to_local_matrix * point;
     Eigen::Vector3d local(local_point.x, local_point.y, local_point.z);
 
-    // Step 2: Check if point is outside AABB
+    // Step 2: Check if point is inside AABB and find closest point if outside
+    bool is_out_of_bounds = false;
+    Eigen::Vector3d query_point = local;
     for (int i = 0; i < 3; ++i) {
         if (local[i] < min_bound[i] || local[i] > max_bound[i]) {
-            return out_of_bounds_value; // Return custom value for out-of-bounds points
+            is_out_of_bounds = true;
+            query_point[i] = std::max(min_bound[i], std::min(max_bound[i], local[i]));
         }
     }
 
-    // Step 3: Map local point to grid coordinates
+    // Step 3: Compute distance from world_point to query_point (only needed if out-of-bounds)
+    double distance = 0.0;
+    if (is_out_of_bounds) {
+        glm::vec4 query_local(query_point.x(), query_point.y(), query_point.z(), 1.0f);
+        glm::mat4 local_to_world = glm::inverse(world_to_local_matrix);
+        glm::vec4 query_world = local_to_world * query_local;
+        Eigen::Vector3d query_world_point(query_world.x, query_world.y, query_world.z);
+        distance = (world_point - query_world_point).norm();
+    }
+
+    // Step 4: Map query_point to grid coordinates
     Eigen::Vector3d normalized;
     for (int i = 0; i < 3; ++i) {
         if (max_bound[i] == min_bound[i]) {
             throw std::invalid_argument("AABB bounds are invalid (max_bound equals min_bound)");
         }
-        normalized[i] = (local[i] - min_bound[i]) / (max_bound[i] - min_bound[i]);
+        normalized[i] = (query_point[i] - min_bound[i]) / (max_bound[i] - min_bound[i]);
         normalized[i] *= (grid_res[i] - 1);
     }
 
-    // Step 4: Compute grid indices and interpolation weights
+    // Step 5: Compute grid indices and interpolation weights
     Eigen::Vector3i idx;
     Eigen::Vector3d weights;
     for (int i = 0; i < 3; ++i) {
         idx[i] = static_cast<int>(std::floor(normalized[i]));
         weights[i] = normalized[i] - idx[i];
-        // Clamp indices to ensure they stay within bounds
         idx[i] = std::max(0, std::min(grid_res[i] - 1, idx[i]));
     }
 
-    // Step 5: Get the 8 corner values of the grid cell
+    // Step 6: Get the 8 corner values of the grid cell
     float values[8];
     int nx = grid_res[0], ny = grid_res[1], nz = grid_res[2];
     if (sdf_values.size() != static_cast<size_t>(nx * ny * nz)) {
@@ -81,7 +237,7 @@ float GetSDFValue(
         values[i] = sdf_values[indices[i]];
     }
 
-    // Step 6: Trilinear interpolation
+    // Step 7: Trilinear interpolation
     float c00 = values[0] * (1 - weights[0]) + values[1] * weights[0];
     float c10 = values[2] * (1 - weights[0]) + values[3] * weights[0];
     float c01 = values[4] * (1 - weights[0]) + values[5] * weights[0];
@@ -92,7 +248,8 @@ float GetSDFValue(
 
     float sdf_value = c0 * (1 - weights[2]) + c1 * weights[2];
 
-    return sdf_value;
+    // Step 8: Return SDF value for in-bounds, or SDF + distance for out-of-bounds
+    return is_out_of_bounds ? sdf_value + static_cast<float>(distance) : sdf_value;
 }
 
 void ComputeSDFWorldBounds(
@@ -208,6 +365,10 @@ void ComputeSDFWorldBounds(
         min_bound[i] = center - new_extent / 2.0;
         max_bound[i] = center + new_extent / 2.0;
     }
+
+    // Step 6: Extend bounds by half a cube size
+    min_bound -= Eigen::Vector3d(cube_size / 2.0, cube_size / 2.0, cube_size / 2.0);
+    max_bound += Eigen::Vector3d(cube_size / 2.0, cube_size / 2.0, cube_size / 2.0);
 }
 
 void visualizeSDF(const Eigen::MatrixXd& P, const Eigen::VectorXd& S, const Eigen::MatrixXd& V, const Eigen::MatrixXi& F) {
@@ -344,12 +505,13 @@ void ApplicationWindow::Initialize()
         for (int j = 0;j < sizeY;j++) {
             for (int k = 0;k < sizeZ;k++) {
                 const Eigen::Vector3d WorldPoint = min_bound + Eigen::Vector3d(i,j,k) * cube_size;
-                (*VoxelArray)(i, j, k) =std::max(GetSDFValue(sdf_values1, WorldPoint,min_bound1,max_bound1,grid_res, model10,100), GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20,100));
+                (*VoxelArray)(i, j, k) =std::max(GetSDFValue(sdf_values1, WorldPoint,min_bound1,max_bound1,grid_res, model10), GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20));
 
                 std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;
             }
         }
     }
+    buildMeshFromGrid((*VoxelArray), test, cube_size,0.2f, min_bound, glm::vec3(1.0f, 1.0f, 1.0f));
 }
 
 void ApplicationWindow::Update()
@@ -426,6 +588,19 @@ void ApplicationWindow::Render()
     ourShader->setVec3("maxBound2", max_bound2[0], max_bound2[1], max_bound2[2]);
     glBindVertexArray(shape2.VAO);
     glDrawElements(GL_TRIANGLES, shape2.indexCount, GL_UNSIGNED_INT, 0);
+    glBindVertexArray(0);
+
+    glm::mat4 model3 = glm::mat4(1.0f);
+    model3 = glm::translate(model3, glm::vec3(4.0));
+    ourShader->setMat4("model", model3);
+    ourShader->setMat4("worldToLocalMatrix1", glm::inverse(model3)); // Dummy for shape1
+    ourShader->setVec3("minBound1", min_bound1[0], min_bound1[1], min_bound1[2]); // Dummy values
+    ourShader->setVec3("maxBound1", max_bound1[0], max_bound1[1], max_bound1[2]);
+    ourShader->setMat4("worldToLocalMatrix2", glm::inverse(model2));
+    ourShader->setVec3("minBound2", min_bound2[0], min_bound2[1], min_bound2[2]);
+    ourShader->setVec3("maxBound2", max_bound2[0], max_bound2[1], max_bound2[2]);
+    glBindVertexArray(test.VAO);
+    glDrawElements(GL_TRIANGLES, test.indexCount, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
     // Swap buffers and poll events
