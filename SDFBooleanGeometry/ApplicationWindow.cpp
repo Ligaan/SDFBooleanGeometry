@@ -92,6 +92,8 @@ void buildMeshFromGrid(Dynamic3DArray& array, Mesh& mesh,
                 // Cube origin in world space
                 Eigen::Vector3d cube_origin = min_bound + Eigen::Vector3d(i, j, k) * cube_size;
 
+                std::cout << cube_origin[0] << " " << cube_origin[1] << " " << cube_origin[2] << "\n";
+
                 // Process triangles (3 edge indices at a time)
                 for (int t = 0; t < 15 && tri[t] != -1; t += 3) {
                     if (tri[t] < 0 || tri[t + 1] < 0 || tri[t + 2] < 0) {
@@ -507,11 +509,11 @@ void ApplicationWindow::Initialize()
                 const Eigen::Vector3d WorldPoint = min_bound + Eigen::Vector3d(i,j,k) * cube_size;
                 (*VoxelArray)(i, j, k) =std::max(GetSDFValue(sdf_values1, WorldPoint,min_bound1,max_bound1,grid_res, model10), GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20));
 
-                std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;
+                //std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;
             }
         }
     }
-    buildMeshFromGrid((*VoxelArray), test, cube_size,0.2f, min_bound, glm::vec3(1.0f, 1.0f, 1.0f));
+    buildMeshFromGrid((*VoxelArray), test, 0.01f, cube_size, min_bound, glm::vec3(1.0f, 1.0f, 1.0f));
 }
 
 void ApplicationWindow::Update()
@@ -591,7 +593,7 @@ void ApplicationWindow::Render()
     glBindVertexArray(0);
 
     glm::mat4 model3 = glm::mat4(1.0f);
-    model3 = glm::translate(model3, glm::vec3(4.0));
+    model3 = glm::translate(model3, glm::vec3(2.0f));
     ourShader->setMat4("model", model3);
     ourShader->setMat4("worldToLocalMatrix1", glm::inverse(model3)); // Dummy for shape1
     ourShader->setVec3("minBound1", min_bound1[0], min_bound1[1], min_bound1[2]); // Dummy values
