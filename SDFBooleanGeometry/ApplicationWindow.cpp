@@ -92,7 +92,9 @@ void buildMeshFromGrid(Dynamic3DArray& array, Mesh& mesh,
                 // Cube origin in world space
                 Eigen::Vector3d cube_origin = min_bound + Eigen::Vector3d(i, j, k) * cube_size;
 
-                std::cout << cube_origin[0] << " " << cube_origin[1] << " " << cube_origin[2] << "\n";
+
+                /*if(k == 20 || k == 19)
+                std::cout << cube_origin[0] << " " << cube_origin[1] << " " << cube_origin[2] << "\n";*/
 
                 // Process triangles (3 edge indices at a time)
                 for (int t = 0; t < 15 && tri[t] != -1; t += 3) {
@@ -165,6 +167,73 @@ void buildMeshFromGrid(Dynamic3DArray& array, Mesh& mesh,
 }
 
 
+// trilinearInterpolate function (unchanged from previous)
+double trilinearInterpolate(double x, double y, double z,
+    double minX, double minY, double minZ,
+    double cubeSize,
+    const std::array<double, 8>& cornerValues,
+    double defaultValue = 0.0) {
+    // Determine the cube containing the point
+    double localMinX = minX;
+    double localMinY = minY;
+    double localMinZ = minZ;
+    std::array<double, 8> localValues = cornerValues;
+
+    // Check if point is outside the original cube
+    double x0 = minX;
+    double y0 = minY;
+    double z0 = minZ;
+    double x1 = x0 + cubeSize;
+    double y1 = y0 + cubeSize;
+    double z1 = z0 + cubeSize;
+
+    if (x < x0 || x > x1 || y < y0 || y > y1 || z < z0 || z > z1) {
+        // Calculate the imaginary cube's min corner
+        localMinX = x0 + cubeSize * std::floor((x - x0) / cubeSize);
+        localMinY = y0 + cubeSize * std::floor((y - y0) / cubeSize);
+        localMinZ = z0 + cubeSize * std::floor((z - z0) / cubeSize);
+
+        // Assign values to the imaginary cube's corners
+        localValues.fill(defaultValue);
+        // Check which corners overlap with the original cube
+        for (int i = 0; i < 8; ++i) {
+            double cx = (i & 1) ? localMinX + cubeSize : localMinX;
+            double cy = (i & 2) ? localMinY + cubeSize : localMinY;
+            double cz = (i & 4) ? localMinZ + cubeSize : localMinZ;
+            // If this corner lies within the original cube, use the original value
+            if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1 && cz >= z0 && cz <= z1) {
+                int origIndex = ((cx == x1) ? 1 : 0) | ((cy == y1) ? 2 : 0) | ((cz == z1) ? 4 : 0);
+                localValues[i] = cornerValues[origIndex];
+            }
+        }
+    }
+
+    // Perform trilinear interpolation
+    // Normalize point coordinates to [0,1] within the cube
+    double xd = (x - localMinX) / cubeSize;
+    double yd = (y - localMinY) / cubeSize;
+    double zd = (z - localMinZ) / cubeSize;
+
+    // Clamp to [0,1] to handle numerical precision
+    xd = std::clamp(xd, 0.0, 1.0);
+    yd = std::clamp(yd, 0.0, 1.0);
+    zd = std::clamp(zd, 0.0, 1.0);
+
+    // Interpolate along x
+    double c00 = localValues[0] * (1 - xd) + localValues[1] * xd;
+    double c01 = localValues[2] * (1 - xd) + localValues[3] * xd;
+    double c10 = localValues[4] * (1 - xd) + localValues[5] * xd;
+    double c11 = localValues[6] * (1 - xd) + localValues[7] * xd;
+
+    // Interpolate along y
+    double c0 = c00 * (1 - yd) + c01 * yd;
+    double c1 = c10 * (1 - yd) + c11 * yd;
+
+    // Interpolate along z
+    return c0 * (1 - zd) + c1 * zd;
+}
+
+// Updated GetSDFValue function
 float GetSDFValue(
     const std::vector<float>& sdf_values,
     const Eigen::Vector3d& world_point,
@@ -178,7 +247,7 @@ float GetSDFValue(
     glm::vec4 local_point = world_to_local_matrix * point;
     Eigen::Vector3d local(local_point.x, local_point.y, local_point.z);
 
-    // Step 2: Check if point is inside AABB and find closest point if outside
+    // Step 2: Check if point is inside AABB and compute distance if outside
     bool is_out_of_bounds = false;
     Eigen::Vector3d query_point = local;
     for (int i = 0; i < 3; ++i) {
@@ -188,7 +257,6 @@ float GetSDFValue(
         }
     }
 
-    // Step 3: Compute distance from world_point to query_point (only needed if out-of-bounds)
     double distance = 0.0;
     if (is_out_of_bounds) {
         glm::vec4 query_local(query_point.x(), query_point.y(), query_point.z(), 1.0f);
@@ -198,60 +266,110 @@ float GetSDFValue(
         distance = (world_point - query_world_point).norm();
     }
 
-    // Step 4: Map query_point to grid coordinates
-    Eigen::Vector3d normalized;
-    for (int i = 0; i < 3; ++i) {
-        if (max_bound[i] == min_bound[i]) {
-            throw std::invalid_argument("AABB bounds are invalid (max_bound equals min_bound)");
-        }
-        normalized[i] = (query_point[i] - min_bound[i]) / (max_bound[i] - min_bound[i]);
-        normalized[i] *= (grid_res[i] - 1);
-    }
-
-    // Step 5: Compute grid indices and interpolation weights
-    Eigen::Vector3i idx;
-    Eigen::Vector3d weights;
-    for (int i = 0; i < 3; ++i) {
-        idx[i] = static_cast<int>(std::floor(normalized[i]));
-        weights[i] = normalized[i] - idx[i];
-        idx[i] = std::max(0, std::min(grid_res[i] - 1, idx[i]));
-    }
-
-    // Step 6: Get the 8 corner values of the grid cell
-    float values[8];
-    int nx = grid_res[0], ny = grid_res[1], nz = grid_res[2];
-    if (sdf_values.size() != static_cast<size_t>(nx * ny * nz)) {
+    // Step 3: Validate grid and compute cell size
+    if (sdf_values.size() != static_cast<size_t>(grid_res[0] * grid_res[1] * grid_res[2])) {
         throw std::invalid_argument("SDF values size does not match grid resolution");
     }
-
-    int indices[8] = {
-        (idx[2] + 0) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 0),
-        (idx[2] + 0) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 1),
-        (idx[2] + 0) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 0),
-        (idx[2] + 0) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 1),
-        (idx[2] + 1) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 0),
-        (idx[2] + 1) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 1),
-        (idx[2] + 1) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 0),
-        (idx[2] + 1) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 1)
-    };
-
-    for (int i = 0; i < 8; ++i) {
-        values[i] = sdf_values[indices[i]];
+    Eigen::Vector3d cell_size;
+    for (int i = 0; i < 3; ++i) {
+        if (max_bound[i] <= min_bound[i]) {
+            throw std::invalid_argument("AABB bounds are invalid (max_bound <= min_bound)");
+        }
+        cell_size[i] = (max_bound[i] - min_bound[i]) / (grid_res[i] - 1);
     }
 
-    // Step 7: Trilinear interpolation
-    float c00 = values[0] * (1 - weights[0]) + values[1] * weights[0];
-    float c10 = values[2] * (1 - weights[0]) + values[3] * weights[0];
-    float c01 = values[4] * (1 - weights[0]) + values[5] * weights[0];
-    float c11 = values[6] * (1 - weights[0]) + values[7] * weights[0];
+    // Step 4: Map query_point to grid cell
+    Eigen::Vector3i idx;
+    for (int i = 0; i < 3; ++i) {
+        double normalized = (query_point[i] - min_bound[i]) / (max_bound[i] - min_bound[i]);
+        normalized *= (grid_res[i] - 1);
+        idx[i] = static_cast<int>(std::floor(normalized));
+        idx[i] = std::max(0, std::min(grid_res[i] - 2, idx[i])); // Ensure valid upper corner
+    }
 
-    float c0 = c00 * (1 - weights[1]) + c10 * weights[1];
-    float c1 = c01 * (1 - weights[1]) + c11 * weights[1];
+    // Step 5: Get the 8 corner values of the grid cell
+    std::array<double, 8> corner_values;
+    int nx = grid_res[0], ny = grid_res[1], nz = grid_res[2];
+    int indices[8] = {
+        (idx[2] + 0) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 0), // (0,0,0)
+        (idx[2] + 0) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 1), // (1,0,0)
+        (idx[2] + 0) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 0), // (0,1,0)
+        (idx[2] + 0) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 1), // (1,1,0)
+        (idx[2] + 1) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 0), // (0,0,1)
+        (idx[2] + 1) * nx * ny + (idx[1] + 0) * nx + (idx[0] + 1), // (1,0,1)
+        (idx[2] + 1) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 0), // (0,1,1)
+        (idx[2] + 1) * nx * ny + (idx[1] + 1) * nx + (idx[0] + 1)  // (1,1,1)
+    };
+    for (int i = 0; i < 8; ++i) {
+        if (indices[i] >= 0 && indices[i] < static_cast<int>(sdf_values.size())) {
+            corner_values[i] = static_cast<double>(sdf_values[indices[i]]);
+        }
+        else {
+            corner_values[i] = 0.0; // Fallback for invalid indices
+        }
+    }
 
-    float sdf_value = c0 * (1 - weights[2]) + c1 * weights[2];
+    // Step 6: Compute cube parameters for trilinearInterpolate
+    double cube_size = cell_size[0]; // Assume uniform cell size (use x-dimension)
+    Eigen::Vector3d cell_min_corner = min_bound + idx.cast<double>().cwiseProduct(cell_size);
 
-    // Step 8: Return SDF value for in-bounds, or SDF + distance for out-of-bounds
-    return is_out_of_bounds ? sdf_value + static_cast<float>(distance) : sdf_value;
+    // Step 7: Perform trilinear interpolation
+    double sdf_value = trilinearInterpolate(
+        query_point.x(), query_point.y(), query_point.z(),
+        cell_min_corner.x(), cell_min_corner.y(), cell_min_corner.z(),
+        cube_size,
+        corner_values,
+        1.0
+    );
+
+    // Step 8: Return SDF value, adding distance for out-of-bounds
+    return is_out_of_bounds ? static_cast<float>(sdf_value + distance) : static_cast<float>(sdf_value);
+}
+
+void RunTest() {
+    // Define cube corners (arbitrary positions, but we'll use min corner and size)
+    std::vector<Eigen::Vector3d> cubeCorners = {
+        {0, 0, 0}, {2, 0, 0}, {0, 2, 0}, {2, 2, 0}, // Bottom face
+        {0, 0, 2}, {2, 0, 2}, {0, 2, 2}, {2, 2, 2}  // Top face
+    };
+
+    // Define values at corners
+    std::vector<double> cornerValuesVec = { -1, -1, -1, -1, 1, 1, 1, 1 };
+    // Convert to std::array for trilinearInterpolate
+    std::array<double, 8> cornerValues;
+    std::copy(cornerValuesVec.begin(), cornerValuesVec.end(), cornerValues.begin());
+
+    // Define cube size (maximum distance for influence)
+    double cubeSize = 2.0;
+
+    // Define minimum corner of the cube
+    double minX = 0.0, minY = 0.0, minZ = 0.0;
+
+    // Test points
+    std::vector<Eigen::Vector3d> testPoints = {
+        {1, 1, 1},      // Inside cube
+        {3, 3, 3},      // Outside but within cubeSize
+        {10, 10, 10},   // Far outside
+        {1, 1, 1.5},    // Inside cube
+        {1, 3, 1.5},    // Outside cube
+        {1, 1, 2},      // On cube boundary
+        {1, 1, 3}       // Outside cube
+    };
+
+    for (const auto& point : testPoints) {
+        double result = trilinearInterpolate(point.x(), point.y(), point.z(),
+            minX, minY, minZ,
+            cubeSize,
+            cornerValues,
+            -1.0);
+        std::cout << "Point (" << point.transpose() << "): Value = ";
+        if (std::isnan(result)) {
+            std::cout << "NaN (invalid)" << std::endl;
+        }
+        else {
+            std::cout << result << std::endl;
+        }
+    }
 }
 
 void ComputeSDFWorldBounds(
@@ -449,14 +567,22 @@ void ApplicationWindow::Initialize()
     glEnable(GL_DEPTH_TEST);
 
     // Create shapes
-    shape1 = Shapes::CreateSphere(1.0f, 64, 64, glm::vec3(0.6f, 0.2f, 0.9f));
-    shape2 = Shapes::CreateBox(1.0f, 1.0f, 2.0f, glm::vec3(0.2f, 0.6f, 0.9f)); // Original size
+    //shape1 = Shapes::CreateSphere(1.0f, 64, 64, glm::vec3(0.6f, 0.2f, 0.9f));
+    shape1 = Shapes::CreateBox(1.0f, 1.0f, 2.0f, glm::vec3(0.6f, 0.2f, 0.9f));
+    shape2 = Shapes::CreateBox(1.0f, 1.0f, 2.0f, glm::vec3(0.2f, 0.6f, 0.9f));//Shapes::CreateSphere(1.0f, 64, 64, glm::vec3(0.2f, 0.6f, 0.9f));
+    //shape2 = Shapes::CreateBox(1.0f, 1.0f, 2.0f, glm::vec3(0.2f, 0.6f, 0.9f)); // Original size
 
     glBindVertexArray(shape1.VAO);
     glDrawElements(GL_TRIANGLES, shape1.indexCount, GL_UNSIGNED_INT, 0);
     glBindVertexArray(0);
 
     ourShader = new Shader("shader.vs", "shader.fs");
+
+    //Cube marching
+    glm::mat4 model10 = glm::mat4(1.0f);
+    glm::mat4 model20 = glm::mat4(1.0f);
+    model20 = glm::translate(model20, glm::vec3(0.0f, 0.0f, 0.0f));
+    model10 = glm::translate(model10, glm::vec3(0.5f, 0.5f, 0.5f));
 
     // Compute SDF grid for shape2 (in local space)
     Eigen::MatrixXd V;
@@ -470,7 +596,7 @@ void ApplicationWindow::Initialize()
 
     glm::mat4 model2 = glm::mat4(1.0f); // Transform unused in ComputeSDFGrid
     model2 = glm::translate(model2,glm::vec3(0.0f)); // Transform unused in ComputeSDFGrid
-    ComputeSDFGrid(shape1, model2, V, F, sdf_values2, grid_res, min_bound1, max_bound1);
+    ComputeSDFGrid(shape1, model10, V, F, sdf_values2, grid_res, min_bound1, max_bound1);
 
     // Create SDF texture
     texture1 = CreateSDFTexture(sdf_values2, grid_res);
@@ -478,17 +604,12 @@ void ApplicationWindow::Initialize()
     // Compute AABB for shape2
     ComputeMeshAABB(shape2, min_bound2, max_bound2); // Assumes shape2 has a Mesh member
 
-    ComputeSDFGrid(shape2, model2, V, F, sdf_values1, grid_res, min_bound2, max_bound2);
+    ComputeSDFGrid(shape2, model20, V, F, sdf_values1, grid_res, min_bound2, max_bound2);
 
     // Create SDF texture
     texture2 = CreateSDFTexture(sdf_values1, grid_res);
 
 
-    //Cube marching
-    glm::mat4 model10 = glm::mat4(1.0f);
-    glm::mat4 model20 = glm::mat4(1.0f);
-    model20 = glm::translate(model20, glm::vec3(0.0f, 0.0f, 0.0f));
-    model10 = glm::translate(model10, glm::vec3(0.0f, 0.0f, 0.0f));
 
     std::vector<Mesh> meshes;
     meshes.push_back(shape1);
@@ -496,20 +617,57 @@ void ApplicationWindow::Initialize()
     std::vector<glm::mat4>transforms;
     transforms.push_back(model10);
     transforms.push_back(model20);
-    double cube_size = 0.1f;
+    double cube_size = 0.03f;
     Eigen::Vector3d min_bound;
     Eigen::Vector3d max_bound;
+    //RunTest();
     ComputeSDFWorldBounds(meshes, transforms, cube_size, min_bound, max_bound);
-    int sizeX = abs(min_bound[0] - max_bound[0])/ cube_size, sizeY = abs(min_bound[1] - max_bound[1])/ cube_size, sizeZ = abs(min_bound[2] - max_bound[2])/ cube_size;
+    int sizeX = abs(min_bound[0] - max_bound[0])/ cube_size + 1, sizeY = abs(min_bound[1] - max_bound[1])/ cube_size + 1, sizeZ = abs(min_bound[2] - max_bound[2])/ cube_size + 1;
     VoxelArray = new Dynamic3DArray(sizeX, sizeY, sizeZ, 1000);
+
+
+    // 0 Intersection
+    // 1 Union
+    // 2 Difference
+    int boolCase = 0;
+    
 
     for (int i = 0;i < sizeX;i++) {
         for (int j = 0;j < sizeY;j++) {
             for (int k = 0;k < sizeZ;k++) {
                 const Eigen::Vector3d WorldPoint = min_bound + Eigen::Vector3d(i,j,k) * cube_size;
-                (*VoxelArray)(i, j, k) =std::max(GetSDFValue(sdf_values1, WorldPoint,min_bound1,max_bound1,grid_res, model10), GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20));
+                switch (boolCase) {
+                case 0:
+                {
+                    (*VoxelArray)(i, j, k) = std::max(
+                        GetSDFValue(sdf_values1, WorldPoint, min_bound1, max_bound1, grid_res, model10),
+                        GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20)
+                    );
+                    break;
+                }
+                case 1:
+                {
+                    (*VoxelArray)(i, j, k) = std::min(
+                        GetSDFValue(sdf_values1, WorldPoint, min_bound1, max_bound1, grid_res, model10),
+                        GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20)
+                    );
+                    break;
+                }
+                case 2:
+                {
+                    (*VoxelArray)(i, j, k) = std::max(
+                        GetSDFValue(sdf_values1, WorldPoint, min_bound1, max_bound1, grid_res, model10),
+                        -GetSDFValue(sdf_values2, WorldPoint, min_bound2, max_bound2, grid_res, model20)
+                    );
+                    break;
+                }
+                default:
+                {
 
-                //std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;
+                }
+                }
+                /*if(k==21)
+                std::cout << i << " " << j << " " << k << " " << (*VoxelArray)(i, j, k) << std::endl;*/
             }
         }
     }
@@ -568,7 +726,7 @@ void ApplicationWindow::Render()
     glm::mat4 model1 = glm::mat4(1.0f);
     glm::mat4 model2 = glm::mat4(1.0f);
     model2 = glm::translate(model2, glm::vec3(0.0f, 0.0f, 0.0f));
-    model1 = glm::translate(model1, glm::vec3(0.0f, 0.0f, 0.0f));
+    model1 = glm::translate(model1, glm::vec3(0.5f, 0.5f, 0.5f));
     ourShader->setMat4("model", model1);
     ourShader->setMat4("worldToLocalMatrix1", glm::inverse(model1)); // Dummy for shape1
     ourShader->setVec3("minBound1", min_bound1[0], min_bound1[1], min_bound1[2]); // Dummy values
